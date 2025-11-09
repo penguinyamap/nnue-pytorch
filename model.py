@@ -25,7 +25,7 @@ class NNUE(pl.LightningModule):
       self, feature_set, lambda_=[1.0], lr=[1.0],
       label_smoothing_eps=0.0, num_batches_warmup=10000, newbob_decay=0.5,
       num_epochs_to_adjust_lr=500, score_scaling=361, min_newbob_scale=1e-5,
-      momentum=0.0):
+      momentum=0.0, ply_begin_threshold=100.0, ply_end_threshold=120.0):
     super(NNUE, self).__init__()
     self.input = nn.Linear(feature_set.num_features, L1)
     self.feature_set = feature_set
@@ -48,9 +48,11 @@ class NNUE(pl.LightningModule):
     self.min_newbob_scale = min_newbob_scale
     self.parameter_index = 0
     self.momentum = momentum
+    self.ply_begin_threshold = ply_begin_threshold
+    self.ply_end_threshold = ply_end_threshold
 
     self._zero_virtual_feature_weights()
-  
+
   '''
   We zero all virtual feature weights because during serialization to .nnue
   we compute weights for each real feature as being the sum of the weights for
@@ -116,8 +118,9 @@ class NNUE(pl.LightningModule):
     x = self.output(l2_)
     return x
   
+
   def step_(self, batch, batch_idx, loss_type):
-    us, them, white, black, outcome, score = batch
+    us, them, white, black, outcome, score, ply = batch
 
     # 600 is the kPonanzaConstant scaling factor needed to convert the training net output to a score.
     # This needs to match the value used in the serializer
@@ -133,7 +136,11 @@ class NNUE(pl.LightningModule):
     outcome_entropy = -(t * (t + epsilon).log() + (1.0 - t) * (1.0 - t + epsilon).log())
     teacher_loss = -(p * F.logsigmoid(q) + (1.0 - p) * F.logsigmoid(-q))
     outcome_loss = -(t * F.logsigmoid(q) + (1.0 - t) * F.logsigmoid(-q))
-    lambda_ = self.lambda_[self.parameter_index]
+    if self.lambda_[self.parameter_index] >= 0.0:
+      lambda_ = self.lambda_[self.parameter_index]
+    else:
+      lambda_ = (self.ply_end_threshold - ply) / (self.ply_end_threshold - self.ply_begin_threshold)
+      lambda_ = torch.clamp(lambda_ , 0.0, 1.0)
     result  = lambda_ * teacher_loss    + (1.0 - lambda_) * outcome_loss
     entropy = lambda_ * teacher_entropy + (1.0 - lambda_) * outcome_entropy
     loss = result.mean() - entropy.mean()
@@ -179,7 +186,7 @@ class NNUE(pl.LightningModule):
 
   def test_step(self, batch, batch_idx):
     self.step_(batch, batch_idx, 'test_loss')
- 
+
   # learning rate warm-up
   def optimizer_step(
       self,

@@ -1,6 +1,6 @@
 import argparse
 import model as M
-import nnue_dataset
+import nnue_dataset 
 import nnue_bin_dataset
 import pytorch_lightning as pl
 import features
@@ -11,6 +11,7 @@ import typing
 from torch import set_num_threads as t_set_num_threads
 from pytorch_lightning import loggers as pl_loggers
 from torch.utils.data import DataLoader, Dataset
+
 
 def data_loader_cc(train_filename, val_filename, feature_set, num_workers, batch_size, filtered, random_fen_skipping, main_device, epoch_size):
   # Epoch and validation sizes are arbitrary
@@ -30,6 +31,7 @@ def data_loader_py(train_filename, val_filename, feature_set, batch_size, main_d
   train = DataLoader(nnue_bin_dataset.NNUEBinData(train_filename, feature_set), batch_size=batch_size, shuffle=True, num_workers=4)
   val = DataLoader(nnue_bin_dataset.NNUEBinData(val_filename, feature_set), batch_size=32)
   return train, val
+
 
 
 class NetworkSaveCheckpoint(pytorch_lightning.callbacks.Checkpoint):
@@ -73,6 +75,8 @@ def main():
   parser.add_argument("--score-scaling", default=361, type=float, dest='score_scaling', help="Score scaling.")
   parser.add_argument("--min-newbob-scale", default=1e-5, type=float, dest='min_newbob_scale', help="Minimum learning rate to stop the training.")
   parser.add_argument("--momentum", default=0.0, type=float, dest='momentum', help="Momentum.")
+  parser.add_argument("--ply-begin-threshold", default=100.0, type=float, dest='ply_begin_threshold', help="Ply at which lambda begins to decay.")
+  parser.add_argument("--ply-end-threshold", default=120.0, type=float, dest='ply_end_threshold', help="Ply at which lambda ends to decay.")
   features.add_argparse_args(parser)
   args = parser.parse_args()
 
@@ -91,7 +95,8 @@ def main():
       newbob_decay=args.newbob_decay,
       num_epochs_to_adjust_lr=args.num_epochs_to_adjust_lr,
       score_scaling=args.score_scaling,
-      min_newbob_scale=args.min_newbob_scale, momentum=args.momentum)
+      min_newbob_scale=args.min_newbob_scale, momentum=args.momentum,
+      ply_begin_threshold=args.ply_begin_threshold, ply_end_threshold=args.ply_end_threshold)
   else:
     nnue = M.NNUE.load_from_checkpoint(args.resume_from_model, feature_set=feature_set)
     nnue.set_feature_set(feature_set)
@@ -144,9 +149,10 @@ def main():
   else:
     print('Using c++ data loader')
     train, val = data_loader_cc(args.train, args.val, feature_set, args.num_workers, batch_size, args.smart_fen_skipping, args.random_fen_skipping, main_device, args.epoch_size)
-  print("here147",train,val,nnue)
+
   trainer.fit(nnue, train, val)
-  print("here149")
+
+  print(f'tb_logger.log_dir={tb_logger.log_dir}')
   ckpt_file_path = os.path.join(tb_logger.log_dir, 'final.ckpt')
   trainer.save_checkpoint(ckpt_file_path)
 
