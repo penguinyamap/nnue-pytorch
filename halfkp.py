@@ -4,9 +4,9 @@ import feature_block
 from collections import OrderedDict
 from feature_block import *
 
-NUM_SQ = 64
-NUM_PT = 10
-NUM_PLANES = (NUM_SQ * NUM_PT + 1)
+NUM_SQ = 81
+# NUM_PT = 10
+NUM_PLANES = 1548
 
 def orient(is_white_pov: bool, sq: int):
   return (63 * (not is_white_pov)) ^ sq
@@ -31,7 +31,7 @@ class Features(FeatureBlock):
 
 class FactorizedFeatures(FeatureBlock):
   def __init__(self):
-    super(FactorizedFeatures, self).__init__('HalfKP^', 0x5d69d5b8, OrderedDict([('HalfKP', NUM_PLANES * NUM_SQ), ('HalfK', NUM_SQ), ('P', NUM_SQ * 10 )]))
+    super(FactorizedFeatures, self).__init__('HalfKP^', 0x5d69d5b8, OrderedDict([('HalfKP', NUM_PLANES * NUM_SQ), ('HalfK', NUM_SQ), ('P', NUM_PLANES )]))
     self.base = Features()
 
   def get_active_features(self, board: chess.Board):
@@ -56,7 +56,7 @@ class FactorizedFeatures(FeatureBlock):
       raise Exception('Feature must be real')
 
     k_idx = idx // NUM_PLANES
-    p_idx = idx % NUM_PLANES - 1
+    p_idx = idx % NUM_PLANES
 
     return [idx, self.get_factor_base_feature('HalfK') + k_idx, self.get_factor_base_feature('P') + p_idx]
 

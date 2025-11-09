@@ -4,11 +4,13 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 import pytorch_lightning as pl
+import sys
+import math
 
 # 3 layer fully connected network
-L1 = 256
-L2 = 32
-L3 = 32
+L1 = 512
+L2 = 8
+L3 = 64
 
 class NNUE(pl.LightningModule):
   """
@@ -19,7 +21,11 @@ class NNUE(pl.LightningModule):
 
   It is not ideal for training a Pytorch quantized model directly.
   """
-  def __init__(self, feature_set, lambda_=1.0):
+  def __init__(
+      self, feature_set, lambda_=[1.0], lr=[1.0],
+      label_smoothing_eps=0.0, num_batches_warmup=10000, newbob_decay=0.5,
+      num_epochs_to_adjust_lr=500, score_scaling=361, min_newbob_scale=1e-5,
+      momentum=0.0):
     super(NNUE, self).__init__()
     self.input = nn.Linear(feature_set.num_features, L1)
     self.feature_set = feature_set
@@ -27,9 +33,24 @@ class NNUE(pl.LightningModule):
     self.l2 = nn.Linear(L2, L3)
     self.output = nn.Linear(L3, 1)
     self.lambda_ = lambda_
+    self.lr = lr
+    self.label_smoothing_eps = label_smoothing_eps
+    self.num_batches_warmup = num_batches_warmup
+    self.newbob_scale = 1.0
+    self.newbob_decay = newbob_decay
+    self.best_loss = 1e10
+    self.num_epochs_to_adjust_lr = num_epochs_to_adjust_lr
+    self.latest_loss_sum = 0.0
+    self.latest_loss_count = 0
+    self.score_scaling = score_scaling
+    # Warmupを開始するステップ数
+    self.warmup_start_global_step = 0
+    self.min_newbob_scale = min_newbob_scale
+    self.parameter_index = 0
+    self.momentum = momentum
 
     self._zero_virtual_feature_weights()
-
+  
   '''
   We zero all virtual feature weights because during serialization to .nnue
   we compute weights for each real feature as being the sum of the weights for
@@ -94,17 +115,17 @@ class NNUE(pl.LightningModule):
     l2_ = torch.clamp(self.l2(l1_), 0.0, 1.0)
     x = self.output(l2_)
     return x
-
+  
   def step_(self, batch, batch_idx, loss_type):
     us, them, white, black, outcome, score = batch
 
     # 600 is the kPonanzaConstant scaling factor needed to convert the training net output to a score.
     # This needs to match the value used in the serializer
     nnue2score = 600
-    scaling = 361
+    scaling = self.score_scaling
 
     q = self(us, them, white, black) * nnue2score / scaling
-    t = outcome
+    t = outcome * (1.0 - self.label_smoothing_eps * 2.0) + self.label_smoothing_eps
     p = (score / scaling).sigmoid()
 
     epsilon = 1e-12
@@ -112,8 +133,9 @@ class NNUE(pl.LightningModule):
     outcome_entropy = -(t * (t + epsilon).log() + (1.0 - t) * (1.0 - t + epsilon).log())
     teacher_loss = -(p * F.logsigmoid(q) + (1.0 - p) * F.logsigmoid(-q))
     outcome_loss = -(t * F.logsigmoid(q) + (1.0 - t) * F.logsigmoid(-q))
-    result  = self.lambda_ * teacher_loss    + (1.0 - self.lambda_) * outcome_loss
-    entropy = self.lambda_ * teacher_entropy + (1.0 - self.lambda_) * outcome_entropy
+    lambda_ = self.lambda_[self.parameter_index]
+    result  = lambda_ * teacher_loss    + (1.0 - lambda_) * outcome_loss
+    entropy = lambda_ * teacher_entropy + (1.0 - lambda_) * outcome_entropy
     loss = result.mean() - entropy.mean()
     self.log(loss_type, loss)
     return loss
@@ -127,23 +149,82 @@ class NNUE(pl.LightningModule):
     return self.step_(batch, batch_idx, 'train_loss')
 
   def validation_step(self, batch, batch_idx):
-    self.step_(batch, batch_idx, 'val_loss')
+    return self.step_(batch, batch_idx, 'val_loss')
+  
+  def validation_epoch_end(self, outputs):
+    self.latest_loss_sum += float(sum(outputs)) / len(outputs);
+    self.latest_loss_count += 1
+
+    if self.newbob_decay != 1.0 and self.current_epoch > 0 and self.current_epoch % self.num_epochs_to_adjust_lr == 0:
+      latest_loss = self.latest_loss_sum / self.latest_loss_count
+      self.latest_loss_sum = 0.0
+      self.latest_loss_count = 0
+      if latest_loss < self.best_loss:
+        self.print(f"{self.current_epoch=}, {latest_loss=} < {self.best_loss=}, accepted, {self.newbob_scale=}")
+        sys.stdout.flush()
+        self.best_loss = latest_loss
+      else:
+        self.newbob_scale *= self.newbob_decay
+        self.print(f"{self.current_epoch=}, {latest_loss=} >= {self.best_loss=}, rejected, {self.newbob_scale=}")
+        sys.stdout.flush()
+    
+    if self.newbob_scale < self.min_newbob_scale:
+      self.parameter_index += 1
+      if self.parameter_index < len(self.lr):
+        self.best_loss = 1e10
+        self.newbob_scale = 1.0
+      else:
+        self.trainer.should_stop = True
+        self.print(f"{self.current_epoch=}, early stopping")
 
   def test_step(self, batch, batch_idx):
     self.step_(batch, batch_idx, 'test_loss')
+ 
+  # learning rate warm-up
+  def optimizer_step(
+      self,
+      epoch,
+      batch_idx,
+      optimizer,
+      optimizer_idx,
+      optimizer_closure,
+      on_tpu,
+      using_native_amp,
+      using_lbfgs,
+  ):
+    # manually warm up lr without a scheduler
+    if self.trainer.global_step - self.warmup_start_global_step < self.num_batches_warmup:
+      warmup_scale = min(1.0, float(self.trainer.global_step - self.warmup_start_global_step + 1) / self.num_batches_warmup)
+    else:
+      warmup_scale = 1.0
+    for pg in optimizer.param_groups:
+      pg["lr"] = self.lr[self.parameter_index] * warmup_scale * self.newbob_scale
+      self.log("lr", pg["lr"])
+
+    # update params
+    optimizer.step(closure=optimizer_closure)
+
+    # clip parameters
+    for child in self.children():
+      if not isinstance(child, nn.Linear):
+        continue
+
+      if child == self.input:
+        continue
+
+      # FC layers are stored as int8 weights, and int32 biases
+      kWeightScaleBits = 6
+      kActivationScale = 127.0
+      if child != self.output:
+        kBiasScale = (1 << kWeightScaleBits) * kActivationScale # = 8128
+      else:
+        kBiasScale = 9600.0 # kPonanzaConstant * FV_SCALE = 600 * 16 = 9600
+      kWeightScale = kBiasScale / kActivationScale # = 64.0 for normal layers
+      kMaxWeight = 127.0 / kWeightScale # roughly 2.0
+      child.weight.data.clamp_(-kMaxWeight, kMaxWeight)
 
   def configure_optimizers(self):
-    # Train with a lower LR on the output layer
-    LR = 1e-3
-    train_params = [
-      {'params': self.get_layers(lambda x: self.output != x), 'lr': LR},
-      {'params': self.get_layers(lambda x: self.output == x), 'lr': LR / 10},
-    ]
-    # increasing the eps leads to less saturated nets with a few dead neurons
-    optimizer = ranger.Ranger(train_params, betas=(.9, 0.999), eps=1.0e-7)
-    # Drop learning rate after 75 epochs
-    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=75, gamma=0.3)
-    return [optimizer], [scheduler]
+    return torch.optim.SGD(self.parameters(), lr=self.lr[0], momentum=self.momentum)
 
   def get_layers(self, filt):
     """

@@ -1,0 +1,43 @@
+﻿  training_data_loader.cpp
+  bitboard.cpp
+  apery_book.cpp
+  book.cpp
+  makebook.cpp
+  makebook2015.cpp
+  makebook2019.cpp
+  yaneuraou-search.cpp
+  evaluate.cpp
+  evaluate_bona_piece.cpp
+  evaluate_mir_inv_tools.cpp
+  evaluate_material.cpp
+  evaluate_nnue.cpp
+  evaluate_nnue_learner.cpp
+  half_kp.cpp
+  half_relative_kp.cpp
+  sfen_packer.cpp
+  learner.cpp
+  learning_tools.cpp
+  multi_think.cpp
+  mate.cpp
+C:\Users\RYZEN\nnue-pytorch-shogi.2024-04-20.halfkp_1024x2-8-64\lib\nnue_training_data_formats.h(7461,1): warning C4819: ファイルは、現在のコード ページ (932) で表示できない文字を含んでいます。データの損失を防ぐために、ファイルを Unicode 形式で保存してください。 (ソース ファイルをコンパイルしています ..\..\training_data_loader.cpp)
+  mate1ply_without_effect.cpp
+  mate_solver.cpp
+  misc.cpp
+  movegen.cpp
+  movepick.cpp
+  position.cpp
+C:\Users\RYZEN\nnue-pytorch-shogi.2024-04-20.halfkp_1024x2-8-64\training_data_loader.cpp(263,28): warning C4267: '=': 'size_t' から 'int' に変換しました。データが失われているかもしれません。
+C:\Users\RYZEN\nnue-pytorch-shogi.2024-04-20.halfkp_1024x2-8-64\training_data_loader.cpp(548,35): message : コンパイル対象の関数 テンプレート インスタンス化 'SparseBatch::SparseBatch<HalfKP>(FeatureSet<HalfKP>,const std::vector<binpack::TrainingDataEntry,std::allocator<binpack::TrainingDataEntry>> &)' のリファレンスを確認してください
+  benchmark.cpp
+  mate_test_cmd.cpp
+  normal_test_cmd.cpp
+  unit_test.cpp
+  thread.cpp
+  timeman.cpp
+  tt.cpp
+  types.cpp
+  usi.cpp
+  usi_option.cpp
+     ライブラリ C:\Users\RYZEN\nnue-pytorch-shogi.2024-04-20.halfkp_1024x2-8-64\nnue-pytorch\x64\Debug\nnue-pytorch.lib とオブジェクト C:\Users\RYZEN\nnue-pytorch-shogi.2024-04-20.halfkp_1024x2-8-64\nnue-pytorch\x64\Debug\nnue-pytorch.exp を作成中
+  nnue-pytorch.vcxproj -> C:\Users\RYZEN\nnue-pytorch-shogi.2024-04-20.halfkp_1024x2-8-64\nnue-pytorch\x64\Debug\nnue-pytorch.dll
+          1 個のファイルをコピーしました。
